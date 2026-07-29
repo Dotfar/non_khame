@@ -2,7 +2,7 @@ import axios from "axios";
 import PDFDocument from "pdfkit";
 import FormData from "form-data";
 
-const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات شما
+const TOKEN ="8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات شما
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
 // حافظه موقت برای مدیریت آلبوم‌ها و وضعیت کاربران
