@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const TOKEN = "8478636545:AAHe-xVVJyahbEiPkyK-QZ4ZnYz8vYXEGwA"; // توکن خودت رو اینجا بذار
+const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن خودت رو اینجا بذار
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
 export default async function handler(req, res) {
