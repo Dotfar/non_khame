@@ -1,103 +1,145 @@
-const BOT_TOKEN = "8478636545:AAHBAhgq0CmhJk8xkOdrd9bkal9okN2pT0k";
-const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+import axios from "axios";
 
-// یک حافظه موقت ساده برای نگهداری عکس‌های کاربران در حال حاضر
-const userSessions = {};
+// ==============================
+// Bot Token
+// ==============================
 
-async function sendMessage(chatId, text, replyMarkup = null) {
-  const body = {
-    chat_id: chatId,
-    text: text,
-  };
-  if (replyMarkup) {
-    body.reply_markup = replyMarkup;
-  }
+const TOKEN = "YOUR_BOT_TOKEN";
 
-  await fetch(`${TELEGRAM_API}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+const API = `https://api.telegram.org/bot${TOKEN}`;
+
+async function sendMessage(chatId, text, extra = {}) {
+    return axios.post(`${API}/sendMessage`, {
+        chat_id: chatId,
+        text,
+        ...extra
+    });
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(200).send("ربات نون‌خامه‌ای روشن و آماده‌ست! 🧁");
-  }
 
-  try {
-    let body = req.body;
-    if (typeof body === "string") {
-      body = JSON.parse(body);
+    if (req.method !== "POST") {
+        return res.status(200).send("Telegram Bot is Running");
     }
 
-    if (body && body.message) {
-      const msg = body.message;
-      const chatId = msg.chat.id;
-      const text = msg.text ? msg.text.trim() : "";
+    try {
 
-      // ساخت سشن برای کاربر اگر وجود نداشت
-      if (!userSessions[chatId]) {
-        userSessions[chatId] = { mode: "normal", photos: [] };
-      }
+        const update = req.body;
 
-      const session = userSessions[chatId];
+        if (!update.message)
+            return res.status(200).json({ ok: true });
 
-      if (text === "/start") {
-        session.mode = "normal";
-        session.photos = [];
-        
-        const welcomeText = 
-          "سلام من نون‌خامه‌ای‌ام! 🧁\n\n" +
-          "من می‌تونم این کارها رو برات انجام بدم:\n" +
-          "• 📷 اگه عکس بفرستی، برات PDF می‌سازم.\n" +
-          "• 📄 اگه PDF بفرستی، عکس‌هاش رو جدا می‌کنم.\n" +
-          "• 🆔 با دستور /id هم آیدی عددی‌ت رو میگم.";
-        
-        const keyboard = {
-          keyboard: [
-            [{ text: "🧷 ساخت PDF" }],
-            [{ text: "❌ لغو عملیات" }]
-          ],
-          resize_keyboard: true,
-        };
+        const msg = update.message;
 
-        await sendMessage(chatId, welcomeText, keyboard);
-      } 
-      else if (text === "/id") {
-        await sendMessage(chatId, `🆔 آیدی عددی شما: ${chatId}`);
-      } 
-      else if (text === "🧷 ساخت PDF") {
-        if (session.photos.length === 0) {
-          await sendMessage(chatId, "⚠️ هنوز هیچ عکسی نفرستادی! اول چندتا عکس بفرست بعد این دکمه رو بزن 🧁");
-        } else {
-          await sendMessage(chatId, `⏳ عالی! ${session.photos.length} تا عکس دریافت شد. دارم PDF رو آماده می‌کنم...`);
-          // اینجا در مراحل بعدی ساخت PDF واقعی رو اضافه می‌کنیم
-          session.photos = [];
-          session.mode = "normal";
+        const chatId = msg.chat.id;
+
+        const text = (msg.text || "").trim();
+
+        //==========================
+        // /start
+        //==========================
+
+        if (text === "/start") {
+
+            await sendMessage(
+                chatId,
+                `سلام 👋
+
+به ربات خوش اومدی.
+
+دستورات:
+
+/start
+/id
+/echo متن
+
+یا از دکمه‌های پایین استفاده کن.`,
+                {
+                    reply_markup: {
+                        keyboard: [
+                            ["/id"],
+                            ["/echo سلام"]
+                        ],
+                        resize_keyboard: true
+                    }
+                }
+            );
+
+            return res.status(200).json({ ok: true });
         }
-      } 
-      else if (text === "❌ لغو عملیات") {
-        session.photos = [];
-        session.mode = "normal";
-        await sendMessage(chatId, "عملکرد پاکسازی شد. هر وقت خواستی دوباره شروع کن! 🧁");
-      } 
-      else if (msg.photo) {
-        // دریافت بزرگترین سایز عکس ارسال شده
-        const photoArray = msg.photo;
-        const bestPhoto = photoArray[photoArray.length - 1];
-        
-        session.photos.push(bestPhoto.file_id);
-        
-        await sendMessage(chatId, `✅ عکس دریافت شد! (تعداد کل عکس‌ها: ${session.photos.length})\nوقتی عکسا تموم شد، روی «🧷 ساخت PDF» بزن.`);
-      } 
-      else if (text) {
-        await sendMessage(chatId, "دستور رو متوجه نشدم! برای شروع /start رو بزن یا عکس بفرست 🧁");
-      }
-    }
-  } catch (error) {
-    console.error("Error processing update:", error);
-  }
 
-  return res.status(200).json({ ok: true });
+        //==========================
+        // /id
+        //==========================
+
+        if (text === "/id") {
+
+            await sendMessage(
+                chatId,
+                `🆔 آیدی عددی شما:
+
+${msg.from.id}`
+            );
+
+            return res.status(200).json({ ok: true });
+        }
+
+        //==========================
+        // /echo
+        //==========================
+
+        if (text.startsWith("/echo")) {
+
+            const value = text.replace("/echo", "").trim();
+
+            await sendMessage(
+                chatId,
+                value.length ? value : "متنی وارد نشده است."
+            );
+
+            return res.status(200).json({ ok: true });
+        }
+
+        //==========================
+        // Text Messages
+        //==========================
+
+        if (text.length > 0) {
+
+            await sendMessage(
+                chatId,
+                `پیام شما:
+
+${text}`
+            );
+
+            return res.status(200).json({ ok: true });
+        }
+
+        //==========================
+        // Light Files
+        //==========================
+
+        if (msg.document || msg.photo) {
+
+            await sendMessage(
+                chatId,
+                "✅ فایل دریافت شد."
+            );
+
+            return res.status(200).json({ ok: true });
+        }
+
+        return res.status(200).json({ ok: true });
+
+    } catch (err) {
+
+        console.error(err.response?.data || err.message);
+
+        return res.status(200).json({
+            ok: true
+        });
+
+    }
+
 }
