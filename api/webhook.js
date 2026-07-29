@@ -1,14 +1,20 @@
 import axios from "axios";
+import PDFDocument from "pdfkit";
+import FormData from "form-data";
 
-const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات خودت را اینجا بگذار
+const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات شما
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
-// حافظه موقت برای نگهداری آلبوم‌ها و نام فایل‌ها
+// حافظه موقت برای مدیریت آلبوم‌ها و وضعیت کاربران
 const albums = {};
 const userState = {};
 
 async function sendMessage(chatId, text) {
-    await axios.post(`${API}/sendMessage`, { chat_id: chatId, text: text });
+    try {
+        await axios.post(`${API}/sendMessage`, { chat_id: chatId, text: text });
+    } catch (err) {
+        console.error("SendMessage Error:", err.message);
+    }
 }
 
 async function getFileUrl(fileId) {
@@ -32,37 +38,40 @@ export default async function handler(req, res) {
         const chatId = msg.chat.id;
         const text = (msg.text || "").trim();
 
-        // ۱. دستور شروع
-        if (text === "/start") {
+        // ۱. دستور شروع یا لغو عملیات
+        if (text === "/start" || text === "❌ لغو عملیات") {
             delete userState[chatId];
-            await sendMessage(chatId, "سلام! 🧁\n\nعکس‌هات رو به صورت تکی یا آلبوم (گروهی) بفرست تا پس از دریافت، نام دلخواه فایل PDF رو ازت بپرسم.");
+            delete albums[chatId];
+            await sendMessage(chatId, "سلام! 🧁\n\nعکس‌هات رو به صورت تکی یا آلبوم بفرست تا پس از دریافت، نام دلخواه فایل PDF رو ازت بپرسم.");
             return res.status(200).json({ ok: true });
         }
 
-        // ۲. اگر کاربر در انتظار وارد کردن نام فایل PDF است
+        // ۲. اگر کاربر در انتظار وارد کردن نام فایل است
         if (userState[chatId] && userState[chatId].step === "WAITING_FOR_NAME") {
-            const fileName = text.replace(/[/\\?%*:|"<>]/g, "_"); // پاک کردن کاراکترهای غیرمجاز برای نام فایل
+            const fileName = text.replace(/[/\\?%*:|"<>]/g, "_") || "document";
             const photoUrls = userState[chatId].photos;
             
-            await sendMessage(chatId, `⏳ در حال ساخت فایل PDF با نام "${fileName}.pdf"...`);
+            await sendMessage(chatId, `⏳ در حال ساخت فایل PDF با نام "${fileName}.pdf"... لطفا کمی صبر کنید.`);
 
-            // ساخت یک سند PDF ساده با تصاویر به صورت بیسیک و استاندارد
-            const pdfBuffer = await createSimplePdf(photoUrls);
+            try {
+                const pdfBuffer = await createPdfFromImages(photoUrls);
 
-            // ارسال فایل PDF به کاربر
-            const formData = new (await import('form-data')).default();
-            formData.append('chat_id', chatId);
-            formData.append('document', pdfBuffer, {
-                filename: `${fileName}.pdf`,
-                contentType: 'application/pdf',
-            });
-            formData.append('caption', `فایل PDF شما با نام ${fileName} آماده شد 🧁`);
+                const formData = new FormData();
+                formData.append('chat_id', chatId);
+                formData.append('document', pdfBuffer, {
+                    filename: `${fileName}.pdf`,
+                    contentType: 'application/pdf',
+                });
+                formData.append('caption', `فایل PDF شما با نام "${fileName}" آماده شد 🧁`);
 
-            await axios.post(`${API}/sendDocument`, formData, {
-                headers: formData.getHeaders(),
-            });
+                await axios.post(`${API}/sendDocument`, formData, {
+                    headers: formData.getHeaders(),
+                });
+            } catch (pdfErr) {
+                console.error("PDF Generation Error:", pdfErr.message);
+                await sendMessage(chatId, "❌ متأسفانه در ساخت فایل PDF خطایی رخ داد. لطفاً دوباره تلاش کنید.");
+            }
 
-            // پاک کردن استیت کاربر
             delete userState[chatId];
             return res.status(200).json({ ok: true });
         }
@@ -72,11 +81,9 @@ export default async function handler(req, res) {
             const photoArray = msg.photo;
             const bestPhoto = photoArray[photoArray.length - 1];
             const fileUrl = await getFileUrl(bestPhoto.file_id);
-
             const mediaGroupId = msg.media_group_id;
 
             if (mediaGroupId) {
-                // اگر عکس‌ها به صورت آلبوم (گروهی) ارسال شوند
                 if (!albums[mediaGroupId]) {
                     albums[mediaGroupId] = {
                         chatId: chatId,
@@ -89,18 +96,17 @@ export default async function handler(req, res) {
                                 step: "WAITING_FOR_NAME",
                                 photos: currentAlbum.photos
                             };
-                            await sendMessage(chatId, `📁 آلبوم عکس دریافت شد (${currentAlbum.photos.length} عکس).\n\nلطفاً **نام دلخواه** فایل PDF خود را ارسال کنید:`);
-                        }, 2000) // مکث ۲ ثانیه برای دریافت کامل همه عکس‌های آلبوم
+                            await sendMessage(chatId, `📁 آلبوم عکس دریافت شد (${currentAlbum.photos.length} عکس).\n\nلطفاً **نام دلخواه** فایل PDF را ارسال کنید:`);
+                        }, 2500)
                     };
                 }
                 albums[mediaGroupId].photos.push(fileUrl);
             } else {
-                // اگر عکس به صورت تکی ارسال شود
                 userState[chatId] = {
                     step: "WAITING_FOR_NAME",
                     photos: [fileUrl]
                 };
-                await sendMessage(chatId, "📷 عکس دریافت شد.\n\nلطفاً **نام دلخواه** فایل PDF خود را ارسال کنید:");
+                await sendMessage(chatId, "📷 عکس دریافت شد.\n\nلطفاً **نام دلخواه** فایل PDF را ارسال کنید:");
             }
 
             return res.status(200).json({ ok: true });
@@ -109,45 +115,36 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
 
     } catch (err) {
-        console.error("Error:", err.message);
+        console.error("Handler Error:", err.message);
         return res.status(200).json({ ok: true });
     }
 }
 
-// تابع سبک و استاندارد برای چسباندن عکس‌ها داخل ساختار PDF بدون خطای پکیج‌های سنگین
-async function createSimplePdf(photoUrls) {
-    // از آنجا که محیط سرورلس باید بدون باگ و فوق‌العاده سبک باشد، 
-    // تصاویر را با ساختار استانداردِ ایمن هندل می‌کنیم.
-    const PDFDocument = (await import('pdfkit')).default;
-    
-    return new Promise((resolve, reject) => {
-        const doc = new PDFDocument({ autoFirstPage: false, margin: 0 });
-        let buffers = [];
+// تابع استاندارد و بهینه برای ساخت PDF از تصاویر
+async function createPdfFromImages(photoUrls) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            const doc = new PDFDocument({ autoFirstPage: false, margin: 0 });
+            let buffers = [];
 
-        doc.on('data', buffers.push.bind(buffers));
-        doc.on('end', () => {
-            resolve(Buffer.concat(buffers));
-        });
+            doc.on('data', chunk => buffers.push(chunk));
+            doc.on('end', () => resolve(Buffer.concat(buffers)));
+            doc.on('error', err => reject(err));
 
-        (async () => {
-            try {
-                for (const url of photoUrls) {
-                    const imgRes = await axios.get(url, { responseType: 'arraybuffer' });
-                    const imgBuffer = Buffer.from(imgRes.data);
+            for (const url of photoUrls) {
+                const imgRes = await axios.get(url, { responseType: 'arraybuffer' });
+                const imgBuffer = Buffer.from(imgRes.data);
 
-                    doc.addPage({ size: 'A4', margin: 0 });
-                    // قراردادن تصویر در صفحه با ابعاد متناسب
-                    doc.image(imgBuffer, 0, 0, {
-                        fit: [595.28, 841.89], // ابعاد استاندارد صفحه A4
-                        align: 'center',
-                        valign: 'center'
-                    });
-                }
-                doc.end();
-            } catch (e) {
-                reject(e);
+                doc.addPage({ size: 'A4', margin: 20 });
+                doc.image(imgBuffer, 20, 20, {
+                    fit: [555, 800],
+                    align: 'center',
+                    valign: 'center'
+                });
             }
-        })();
+            doc.end();
+        } catch (e) {
+            reject(e);
+        }
     });
 }
-
