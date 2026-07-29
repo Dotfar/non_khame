@@ -4,7 +4,7 @@ import axios from "axios";
 // Bot Token
 // ==============================
 
-const TOKEN = "YOUR_BOT_TOKEN";
+const TOKEN = "8478636545:AAHBAhgq0CmhJk8xkOdrd9bkal9okN2pT0k";
 
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
