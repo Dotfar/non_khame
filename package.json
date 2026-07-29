@@ -1,0 +1,10 @@
+{
+  "name": "non-khame",
+  "version": "1.0.0",
+  "description": "Telegram bot for Non Khame",
+  "main": "api/webhook.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {}
+}
