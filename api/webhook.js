@@ -48,7 +48,7 @@ export default async function handler(req, res) {
         if (text === "/start") {
             delete userState[chatId];
             delete albums[chatId];
-            await sendMessage(chatId, "سلام! 🧁\n\nعکس‌هات رو به صورت تکی یا آلبوم بفرست تا پس از دریافت، نام دلخواه فایل PDF رو ازت بپرسم.");
+            await sendMessage(chatId, "سلام! من نون خامه ای هستم\n\nعکس‌هات رو به صورت تکی یا آلبوم بفرست تا پس از دریافت، نام دلخواه فایل PDF رو ازت بپرسم.");
             return res.status(200).json({ ok: true });
         }
 
