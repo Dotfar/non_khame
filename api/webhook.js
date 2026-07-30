@@ -1,11 +1,8 @@
 import axios from "axios";
-import PDFDocument from "pdfkit";
-import FormData from "form-data";
 
-const TOKEN ="8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات شما
+const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات شما
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
-// حافظه موقت برای مدیریت آلبوم‌ها و وضعیت کاربران
 const albums = {};
 const userState = {};
 
@@ -14,6 +11,15 @@ async function sendMessage(chatId, text) {
         await axios.post(`${API}/sendMessage`, { chat_id: chatId, text: text });
     } catch (err) {
         console.error("SendMessage Error:", err.message);
+    }
+}
+
+// تابع برای نمایش وضعیت "در حال ارسال فایل..." زیر اسم ربات
+async function sendAction(chatId, action) {
+    try {
+        await axios.post(`${API}/sendChatAction`, { chat_id: chatId, action: action });
+    } catch (err) {
+        console.error("Action Error:", err.message);
     }
 }
 
@@ -38,8 +44,8 @@ export default async function handler(req, res) {
         const chatId = msg.chat.id;
         const text = (msg.text || "").trim();
 
-        // ۱. دستور شروع یا لغو عملیات
-        if (text === "/start" || text === "❌ لغو عملیات") {
+        // ۱. دستور شروع
+        if (text === "/start") {
             delete userState[chatId];
             delete albums[chatId];
             await sendMessage(chatId, "سلام! 🧁\n\nعکس‌هات رو به صورت تکی یا آلبوم بفرست تا پس از دریافت، نام دلخواه فایل PDF رو ازت بپرسم.");
@@ -51,25 +57,25 @@ export default async function handler(req, res) {
             const fileName = text.replace(/[/\\?%*:|"<>]/g, "_") || "document";
             const photoUrls = userState[chatId].photos;
             
-            await sendMessage(chatId, `⏳ در حال ساخت فایل PDF با نام "${fileName}.pdf"... لطفا کمی صبر کنید.`);
+            // فعال کردن وضعیت uploading زیر اسم ربات (بدون فرستادن پیام متنی)
+            await sendAction(chatId, "upload_document");
 
             try {
-                const pdfBuffer = await createPdfFromImages(photoUrls);
+                const pdfBuffer = await createSafePdf(photoUrls);
 
-                const formData = new FormData();
+                const formData = new (await import('form-data')).default();
                 formData.append('chat_id', chatId);
                 formData.append('document', pdfBuffer, {
                     filename: `${fileName}.pdf`,
                     contentType: 'application/pdf',
                 });
-                formData.append('caption', `فایل PDF شما با نام "${fileName}" آماده شد 🧁`);
 
                 await axios.post(`${API}/sendDocument`, formData, {
                     headers: formData.getHeaders(),
                 });
             } catch (pdfErr) {
-                console.error("PDF Generation Error:", pdfErr.message);
-                await sendMessage(chatId, "❌ متأسفانه در ساخت فایل PDF خطایی رخ داد. لطفاً دوباره تلاش کنید.");
+                console.error("PDF Error:", pdfErr.message);
+                await sendMessage(chatId, "❌ خطا در ساخت PDF. لطفاً دوباره تلاش کنید.");
             }
 
             delete userState[chatId];
@@ -96,7 +102,8 @@ export default async function handler(req, res) {
                                 step: "WAITING_FOR_NAME",
                                 photos: currentAlbum.photos
                             };
-                            await sendMessage(chatId, `📁 آلبوم عکس دریافت شد (${currentAlbum.photos.length} عکس).\n\nلطفاً **نام دلخواه** فایل PDF را ارسال کنید:`);
+                            // درخواست اسم بدون هیچ دکمه‌ای
+                            await sendMessage(chatId, "اسم انتخاب کن برای فایل:");
                         }, 2500)
                     };
                 }
@@ -106,7 +113,8 @@ export default async function handler(req, res) {
                     step: "WAITING_FOR_NAME",
                     photos: [fileUrl]
                 };
-                await sendMessage(chatId, "📷 عکس دریافت شد.\n\nلطفاً **نام دلخواه** فایل PDF را ارسال کنید:");
+                // درخواست اسم بدون هیچ دکمه‌ای
+                await sendMessage(chatId, "اسم انتخاب کن برای فایل:");
             }
 
             return res.status(200).json({ ok: true });
@@ -120,8 +128,8 @@ export default async function handler(req, res) {
     }
 }
 
-// تابع استاندارد و بهینه برای ساخت PDF از تصاویر
-async function createPdfFromImages(photoUrls) {
+async function createSafePdf(photoUrls) {
+    const PDFDocument = (await import('pdfkit')).default;
     return new Promise(async (resolve, reject) => {
         try {
             const doc = new PDFDocument({ autoFirstPage: false, margin: 0 });
@@ -135,9 +143,9 @@ async function createPdfFromImages(photoUrls) {
                 const imgRes = await axios.get(url, { responseType: 'arraybuffer' });
                 const imgBuffer = Buffer.from(imgRes.data);
 
-                doc.addPage({ size: 'A4', margin: 20 });
-                doc.image(imgBuffer, 20, 20, {
-                    fit: [555, 800],
+                doc.addPage({ size: 'A4', margin: 15 });
+                doc.image(imgBuffer, 15, 15, {
+                    fit: [565, 812],
                     align: 'center',
                     valign: 'center'
                 });
