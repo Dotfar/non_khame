@@ -1,158 +1,825 @@
 import axios from "axios";
+import PDFDocument from "pdfkit";
+import FormData from "form-data";
 
-const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s"; // توکن ربات شما
+// ================================
+// CONFIG
+// ================================
+
+const TOKEN = 8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s;
+
+if (!TOKEN) {
+    console.error("❌ BOT_TOKEN is not set");
+}
+
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
-const albums = {};
-const userState = {};
+// حافظه موقت
+// توجه: برای Vercel دائمی نیست
+const albums = globalThis.__albums || (globalThis.__albums = {});
+const userState = globalThis.__userState || (globalThis.__userState = {});
+
+
+// ================================
+// TELEGRAM HELPERS
+// ================================
+
+async function telegram(method, data = {}) {
+    try {
+        const response = await axios.post(
+            `${API}/${method}`,
+            data,
+            {
+                timeout: 30000
+            }
+        );
+
+        if (!response.data.ok) {
+            console.error(
+                `❌ Telegram ${method} Error:`,
+                response.data
+            );
+
+            throw new Error(
+                response.data.description || "Telegram API Error"
+            );
+        }
+
+        return response.data;
+
+    } catch (error) {
+
+        console.error(
+            `❌ Telegram ${method} Exception:`,
+            error.response?.data || error.message
+        );
+
+        throw error;
+    }
+}
+
+
+// ================================
+// SEND MESSAGE
+// ================================
 
 async function sendMessage(chatId, text) {
+
+    return telegram("sendMessage", {
+        chat_id: chatId,
+        text
+    });
+}
+
+
+// ================================
+// CHAT ACTION
+// ================================
+
+async function sendAction(chatId, action) {
+
     try {
-        await axios.post(`${API}/sendMessage`, { chat_id: chatId, text: text });
-    } catch (err) {
-        console.error("SendMessage Error:", err.message);
+
+        await telegram("sendChatAction", {
+            chat_id: chatId,
+            action
+        });
+
+    } catch (error) {
+
+        console.error(
+            "⚠️ Chat Action Error:",
+            error.message
+        );
+
     }
 }
 
-// تابع برای نمایش وضعیت "در حال ارسال فایل..." زیر اسم ربات
-async function sendAction(chatId, action) {
-    try {
-        await axios.post(`${API}/sendChatAction`, { chat_id: chatId, action: action });
-    } catch (err) {
-        console.error("Action Error:", err.message);
-    }
-}
+
+// ================================
+// GET TELEGRAM FILE URL
+// ================================
 
 async function getFileUrl(fileId) {
-    const res = await axios.get(`${API}/getFile?file_id=${fileId}`);
-    const filePath = res.data.result.file_path;
+
+    const result = await telegram("getFile", {
+        file_id: fileId
+    });
+
+    const filePath = result.result.file_path;
+
+    if (!filePath) {
+        throw new Error("Telegram file_path not found");
+    }
+
     return `https://api.telegram.org/file/bot${TOKEN}/${filePath}`;
 }
 
-export default async function handler(req, res) {
-    if (req.method !== "POST") {
-        return res.status(200).send("PDF Bot is Running 🧁");
-    }
 
-    try {
-        const update = req.body;
-        if (!update.message) {
-            return res.status(200).json({ ok: true });
+// ================================
+// DOWNLOAD IMAGE
+// ================================
+
+async function downloadImage(fileId) {
+
+    const fileUrl = await getFileUrl(fileId);
+
+    const response = await axios.get(
+        fileUrl,
+        {
+            responseType: "arraybuffer",
+            timeout: 60000
         }
+    );
 
-        const msg = update.message;
-        const chatId = msg.chat.id;
-        const text = (msg.text || "").trim();
-
-        // ۱. دستور شروع
-        if (text === "/start") {
-            delete userState[chatId];
-            delete albums[chatId];
-            await sendMessage(chatId, "سلام! من نون خامه ای هستم\n\nعکس‌هات رو به صورت تکی یا آلبوم بفرست تا پس از دریافت، نام دلخواه فایل PDF رو ازت بپرسم.");
-            return res.status(200).json({ ok: true });
-        }
-
-        // ۲. اگر کاربر در انتظار وارد کردن نام فایل است
-        if (userState[chatId] && userState[chatId].step === "WAITING_FOR_NAME") {
-            const fileName = text.replace(/[/\\?%*:|"<>]/g, "_") || "document";
-            const photoUrls = userState[chatId].photos;
-            
-            // فعال کردن وضعیت uploading زیر اسم ربات (بدون فرستادن پیام متنی)
-            await sendAction(chatId, "upload_document");
-
-            try {
-                const pdfBuffer = await createSafePdf(photoUrls);
-
-                const formData = new (await import('form-data')).default();
-                formData.append('chat_id', chatId);
-                formData.append('document', pdfBuffer, {
-                    filename: `${fileName}.pdf`,
-                    contentType: 'application/pdf',
-                });
-
-                await axios.post(`${API}/sendDocument`, formData, {
-                    headers: formData.getHeaders(),
-                });
-            } catch (pdfErr) {
-                console.error("PDF Error:", pdfErr.message);
-                await sendMessage(chatId, "❌ خطا در ساخت PDF. لطفاً دوباره تلاش کنید.");
-            }
-
-            delete userState[chatId];
-            return res.status(200).json({ ok: true });
-        }
-
-        // ۳. دریافت عکس یا آلبوم عکس
-        if (msg.photo) {
-            const photoArray = msg.photo;
-            const bestPhoto = photoArray[photoArray.length - 1];
-            const fileUrl = await getFileUrl(bestPhoto.file_id);
-            const mediaGroupId = msg.media_group_id;
-
-            if (mediaGroupId) {
-                if (!albums[mediaGroupId]) {
-                    albums[mediaGroupId] = {
-                        chatId: chatId,
-                        photos: [],
-                        timer: setTimeout(async () => {
-                            const currentAlbum = albums[mediaGroupId];
-                            delete albums[mediaGroupId];
-                            
-                            userState[chatId] = {
-                                step: "WAITING_FOR_NAME",
-                                photos: currentAlbum.photos
-                            };
-                            // درخواست اسم بدون هیچ دکمه‌ای
-                            await sendMessage(chatId, "اسم انتخاب کن برای فایل:");
-                        }, 2500)
-                    };
-                }
-                albums[mediaGroupId].photos.push(fileUrl);
-            } else {
-                userState[chatId] = {
-                    step: "WAITING_FOR_NAME",
-                    photos: [fileUrl]
-                };
-                // درخواست اسم بدون هیچ دکمه‌ای
-                await sendMessage(chatId, "اسم انتخاب کن برای فایل:");
-            }
-
-            return res.status(200).json({ ok: true });
-        }
-
-        return res.status(200).json({ ok: true });
-
-    } catch (err) {
-        console.error("Handler Error:", err.message);
-        return res.status(200).json({ ok: true });
-    }
+    return Buffer.from(response.data);
 }
 
-async function createSafePdf(photoUrls) {
-    const PDFDocument = (await import('pdfkit')).default;
+
+// ================================
+// CREATE PDF
+// ================================
+
+async function createPdf(fileIds) {
+
     return new Promise(async (resolve, reject) => {
+
         try {
-            const doc = new PDFDocument({ autoFirstPage: false, margin: 0 });
-            let buffers = [];
 
-            doc.on('data', chunk => buffers.push(chunk));
-            doc.on('end', () => resolve(Buffer.concat(buffers)));
-            doc.on('error', err => reject(err));
+            const doc = new PDFDocument({
+                autoFirstPage: false,
+                margin: 0
+            });
 
-            for (const url of photoUrls) {
-                const imgRes = await axios.get(url, { responseType: 'arraybuffer' });
-                const imgBuffer = Buffer.from(imgRes.data);
+            const chunks = [];
 
-                doc.addPage({ size: 'A4', margin: 15 });
-                doc.image(imgBuffer, 15, 15, {
-                    fit: [565, 812],
-                    align: 'center',
-                    valign: 'center'
+            doc.on("data", chunk => {
+                chunks.push(chunk);
+            });
+
+            doc.on("end", () => {
+
+                const pdf = Buffer.concat(chunks);
+
+                resolve(pdf);
+            });
+
+            doc.on("error", reject);
+
+
+            // ----------------------------
+            // DOWNLOAD & ADD IMAGES
+            // ----------------------------
+
+            for (const fileId of fileIds) {
+
+                console.log(
+                    "⬇️ Downloading file:",
+                    fileId
+                );
+
+                const imageBuffer =
+                    await downloadImage(fileId);
+
+
+                // A4
+                const pageWidth = 595.28;
+                const pageHeight = 841.89;
+
+                const margin = 15;
+
+                doc.addPage({
+                    size: "A4",
+                    margin: 0
                 });
+
+                doc.image(
+                    imageBuffer,
+                    margin,
+                    margin,
+                    {
+                        fit: [
+                            pageWidth - margin * 2,
+                            pageHeight - margin * 2
+                        ],
+                        align: "center",
+                        valign: "center"
+                    }
+                );
             }
+
             doc.end();
-        } catch (e) {
-            reject(e);
+
+        } catch (error) {
+
+            reject(error);
         }
     });
 }
+
+
+// ================================
+// SEND PDF
+// ================================
+
+async function sendPdf(
+    chatId,
+    pdfBuffer,
+    fileName
+) {
+
+    const form = new FormData();
+
+    form.append(
+        "chat_id",
+        String(chatId)
+    );
+
+    form.append(
+        "document",
+        pdfBuffer,
+        {
+            filename: `${fileName}.pdf`,
+            contentType: "application/pdf"
+        }
+    );
+
+    await axios.post(
+        `${API}/sendDocument`,
+        form,
+        {
+            headers: form.getHeaders(),
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+            timeout: 120000
+        }
+    );
+}
+
+
+// ================================
+// CLEAN FILE NAME
+// ================================
+
+function cleanFileName(name) {
+
+    let result = String(name || "")
+        .trim()
+        .replace(/[\/\\?%*:|"<>]/g, "_")
+        .replace(/\s+/g, " ");
+
+    if (!result) {
+        result = "document";
+    }
+
+    return result.substring(0, 100);
+}
+
+
+// ================================
+// START COMMAND
+// ================================
+
+async function handleStart(chatId) {
+
+    delete userState[chatId];
+
+    // حذف آلبوم‌های احتمالی این کاربر
+    for (const albumId of Object.keys(albums)) {
+
+        if (albums[albumId]?.chatId === chatId) {
+
+            if (albums[albumId].timer) {
+                clearTimeout(
+                    albums[albumId].timer
+                );
+            }
+
+            delete albums[albumId];
+        }
+    }
+
+    await sendMessage(
+        chatId,
+        `سلام 👋🏻
+
+من نون خامه ای هستم m🧁
+
+عکس‌هات رو به صورت تکی یا آلبوم بفرست.
+
+بعد از دریافت عکس‌ها ازت می‌پرسم:
+
+📄 اسم فایل PDF رو چی بزارم؟`
+    );
+}
+
+
+// ================================
+// ASK FILE NAME
+// ================================
+
+async function askForFileName(
+    chatId,
+    photos
+) {
+
+    if (!photos || photos.length === 0) {
+
+        console.error(
+            "❌ No photos found for:",
+            chatId
+        );
+
+        await sendMessage(
+            chatId,
+            "❌ عکس‌ها دریافت نشدن. دوباره امتحان کن."
+        );
+
+        return;
+    }
+
+
+    userState[chatId] = {
+
+        step: "WAITING_FOR_NAME",
+
+        photos,
+
+        createdAt: Date.now()
+    };
+
+
+    console.log(
+        `✅ ${photos.length} photo(s) ready for PDF`
+    );
+
+
+    await sendMessage(
+        chatId,
+        `✅ ${photos.length} عکس دریافت شد.
+
+📄 اسم فایل PDF رو چی بزارم؟`
+    );
+}
+
+
+// ================================
+// HANDLE FILE NAME
+// ================================
+
+async function handleFileName(
+    chatId,
+    text
+) {
+
+    const state = userState[chatId];
+
+    if (!state) {
+        return false;
+    }
+
+    if (
+        state.step !==
+        "WAITING_FOR_NAME"
+    ) {
+        return false;
+    }
+
+
+    const fileName =
+        cleanFileName(text);
+
+
+    if (!state.photos?.length) {
+
+        delete userState[chatId];
+
+        await sendMessage(
+            chatId,
+            "❌ عکس‌ها پیدا نشدن. لطفاً دوباره عکس بفرست."
+        );
+
+        return true;
+    }
+
+
+    await sendMessage(
+        chatId,
+        `⏳ در حال ساخت فایل PDF با نام «${fileName}.pdf»...`
+    );
+
+
+    await sendAction(
+        chatId,
+        "upload_document"
+    );
+
+
+    try {
+
+        console.log(
+            `📄 Creating PDF for ${chatId}`
+        );
+
+        const pdf =
+            await createPdf(
+                state.photos
+            );
+
+
+        console.log(
+            `📤 Sending PDF to ${chatId}`
+        );
+
+
+        await sendPdf(
+            chatId,
+            pdf,
+            fileName
+        );
+
+
+        await sendMessage(
+            chatId,
+            "✅ فایل PDF آماده شد 🧁"
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "❌ PDF ERROR:",
+            error.response?.data ||
+            error.stack ||
+            error.message
+        );
+
+
+        await sendMessage(
+            chatId,
+            `❌ موقع ساخت PDF خطا پیش اومد.
+
+جزئیات خطا:
+${error.message || "Unknown error"}
+
+دوباره عکس‌ها رو بفرست.`
+        );
+
+    } finally {
+
+        delete userState[chatId];
+    }
+
+
+    return true;
+}
+
+
+// ================================
+// HANDLE PHOTO
+// ================================
+
+async function handlePhoto(
+    msg,
+    chatId
+) {
+
+    try {
+
+        const photos =
+            msg.photo;
+
+        if (
+            !photos ||
+            photos.length === 0
+        ) {
+
+            await sendMessage(
+                chatId,
+                "❌ عکس قابل پردازش نیست."
+            );
+
+            return;
+        }
+
+
+        // بهترین کیفیت عکس
+        const bestPhoto =
+            photos[photos.length - 1];
+
+
+        const fileId =
+            bestPhoto.file_id;
+
+
+        console.log(
+            "📸 Photo received:",
+            fileId
+        );
+
+
+        // --------------------------------
+        // ALBUM
+        // --------------------------------
+
+        const mediaGroupId =
+            msg.media_group_id;
+
+
+        if (mediaGroupId) {
+
+            console.log(
+                "📚 Album:",
+                mediaGroupId
+            );
+
+
+            // اگر آلبوم جدید است
+            if (!albums[mediaGroupId]) {
+
+                albums[mediaGroupId] = {
+
+                    chatId,
+
+                    photos: [],
+
+                    timer: null
+                };
+            }
+
+
+            // اضافه کردن عکس
+            albums[
+                mediaGroupId
+            ].photos.push(fileId);
+
+
+            // تایمر قبلی را حذف کن
+            if (
+                albums[mediaGroupId].timer
+            ) {
+
+                clearTimeout(
+                    albums[mediaGroupId].timer
+                );
+            }
+
+
+            // چون عکس‌های آلبوم پشت سر هم می‌آیند،
+            // بعد از 1.5 ثانیه از آخرین عکس
+            // آلبوم را کامل فرض می‌کنیم.
+
+            albums[mediaGroupId].timer =
+                setTimeout(async () => {
+
+                    try {
+
+                        const album =
+                            albums[mediaGroupId];
+
+
+                        if (!album) {
+                            return;
+                        }
+
+
+                        const albumPhotos =
+                            [...album.photos];
+
+
+                        delete albums[
+                            mediaGroupId
+                        ];
+
+
+                        console.log(
+                            `✅ Album completed: ${albumPhotos.length} photos`
+                        );
+
+
+                        await askForFileName(
+                            album.chatId,
+                            albumPhotos
+                        );
+
+
+                    } catch (error) {
+
+                        console.error(
+                            "❌ Album timer error:",
+                            error
+                        );
+                    }
+
+                }, 1500);
+
+
+            return;
+        }
+
+
+        // --------------------------------
+        // SINGLE PHOTO
+        // --------------------------------
+
+        console.log(
+            "📸 Single photo"
+        );
+
+
+        await askForFileName(
+            chatId,
+            [fileId]
+        );
+
+    } catch (error) {
+
+        console.error(
+            "❌ Photo Handler Error:",
+            error.response?.data ||
+            error.stack ||
+            error.message
+        );
+
+
+        await sendMessage(
+            chatId,
+            `❌ عکس دریافت شد ولی پردازش نشد.
+
+خطا:
+${error.message || "Unknown error"}
+
+لطفاً دوباره امتحان کن.`
+        );
+    }
+}
+
+
+// ================================
+// MAIN WEBHOOK
+// ================================
+
+export default async function handler(
+    req,
+    res
+) {
+
+    // --------------------------------
+    // HEALTH CHECK
+    // --------------------------------
+
+    if (req.method !== "POST") {
+
+        return res
+            .status(200)
+            .send(
+                "🧁 PDF Bot is Running"
+            );
+    }
+
+
+    try {
+
+        const update =
+            req.body;
+
+
+        console.log(
+            "📩 UPDATE:",
+            JSON.stringify(update)
+        );
+
+
+        // --------------------------------
+        // فقط message
+        // --------------------------------
+
+        if (!update?.message) {
+
+            return res
+                .status(200)
+                .json({
+                    ok: true
+                });
+        }
+
+
+        const msg =
+            update.message;
+
+
+        const chatId =
+            msg.chat?.id;
+
+
+        if (!chatId) {
+
+            return res
+                .status(200)
+                .json({
+                    ok: true
+                });
+        }
+
+
+        const text =
+            (msg.text || "")
+                .trim();
+
+
+        // --------------------------------
+        // START
+        // --------------------------------
+
+        if (text === "/start") {
+
+            await handleStart(
+                chatId
+            );
+
+            return res
+                .status(200)
+                .json({
+                    ok: true
+                });
+        }
+
+
+        // --------------------------------
+        // WAITING FOR FILE NAME
+        // --------------------------------
+
+        if (
+            userState[chatId]?.step ===
+            "WAITING_FOR_NAME"
+        ) {
+
+            await handleFileName(
+                chatId,
+                text
+            );
+
+            return res
+                .status(200)
+                .json({
+                    ok: true
+                });
+        }
+
+
+        // --------------------------------
+        // PHOTO
+        // --------------------------------
+
+        if (msg.photo) {
+
+            await handlePhoto(
+                msg,
+                chatId
+            );
+
+            return res
+                .status(200)
+                .json({
+                    ok: true
+                });
+        }
+
+
+        // --------------------------------
+        // UNKNOWN MESSAGE
+        // --------------------------------
+
+        await sendMessage(
+            chatId,
+            "🧁 برای ساخت PDF عکس بفرست."
+        );
+
+
+        return res
+            .status(200)
+            .json({
+                ok: true
+            });
+
+
+    } catch (error) {
+
+        console.error(
+            "🔥 MAIN HANDLER ERROR:",
+            error.response?.data ||
+            error.stack ||
+            error.message
+        );
+
+
+        // همیشه به Telegram پاسخ 200 می‌دهیم
+        // تا webhook دوباره بی‌دلیل تکرار نشود.
+
+        return res
+            .status(200)
+            .json({
+                ok: true
+            });
+    }
+                      }
