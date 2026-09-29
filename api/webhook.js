@@ -5,13 +5,14 @@ import FormData from "form-data";
 const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s";
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
-const albums = {};
 const userState = {};
 
 async function telegram(method, data = {}) {
-    const response = await axios.post(`${API}/${method}`, data, {
-        timeout: 30000
-    });
+    const response = await axios.post(
+        `${API}/${method}`,
+        data,
+        { timeout: 30000 }
+    );
 
     if (!response.data.ok) {
         throw new Error(
@@ -23,14 +24,10 @@ async function telegram(method, data = {}) {
 }
 
 async function sendMessage(chatId, text) {
-    try {
-        await telegram("sendMessage", {
-            chat_id: chatId,
-            text
-        });
-    } catch (error) {
-        console.error("sendMessage:", error.message);
-    }
+    await telegram("sendMessage", {
+        chat_id: chatId,
+        text
+    });
 }
 
 async function sendAction(chatId, action) {
@@ -40,7 +37,7 @@ async function sendAction(chatId, action) {
             action
         });
     } catch (error) {
-        console.error("sendAction:", error.message);
+        console.error("ACTION ERROR:", error.message);
     }
 }
 
@@ -50,10 +47,6 @@ async function getFileUrl(fileId) {
     });
 
     const filePath = result.result.file_path;
-
-    if (!filePath) {
-        throw new Error("Telegram file path not found");
-    }
 
     return `https://api.telegram.org/file/bot${TOKEN}/${filePath}`;
 }
@@ -79,7 +72,7 @@ async function createPdf(fileIds) {
 
             const chunks = [];
 
-            doc.on("data", (chunk) => {
+            doc.on("data", chunk => {
                 chunks.push(chunk);
             });
 
@@ -122,12 +115,16 @@ async function sendPdf(chatId, pdfBuffer, fileName) {
         contentType: "application/pdf"
     });
 
-    await axios.post(`${API}/sendDocument`, form, {
-        headers: form.getHeaders(),
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        timeout: 120000
-    });
+    await axios.post(
+        `${API}/sendDocument`,
+        form,
+        {
+            headers: form.getHeaders(),
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+            timeout: 120000
+        }
+    );
 }
 
 function cleanFileName(name) {
@@ -143,57 +140,88 @@ function cleanFileName(name) {
     return result.substring(0, 100);
 }
 
-async function askForFileName(chatId, fileIds) {
-    if (!fileIds || fileIds.length === 0) {
-        await sendMessage(
-            chatId,
-            "❌ هیچ عکسی دریافت نشد. دوباره امتحان کن."
-        );
-        return;
-    }
-
-    userState[chatId] = {
-        step: "WAITING_FOR_NAME",
-        photos: fileIds
-    };
+async function askForName(chatId) {
+    const count = userState[chatId]?.photos?.length || 0;
 
     await sendMessage(
         chatId,
-        `✅ ${fileIds.length} عکس دریافت شد.
+        `📸 ${count} عکس دریافت شد!
 
-📄 اسم فایل PDF رو چی بزارم؟`
+اگه عکس دیگه‌ای هم داری، همینجا بفرست 👇🏻
+
+وقتی کارت تموم شد، فقط **اسم فایل PDF** رو بفرست.
+
+مثلاً:
+درس ریاضی
+یا
+عکس‌های سفر 🌱`
     );
+}
+
+async function handlePhoto(msg, chatId) {
+    const photo = msg.photo[msg.photo.length - 1];
+    const fileId = photo.file_id;
+
+    // اگر قبلاً عکس فرستاده و منتظر اسم هستیم،
+    // عکس جدید را هم به همان PDF اضافه کن
+    if (
+        userState[chatId] &&
+        userState[chatId].step === "WAITING_FOR_NAME"
+    ) {
+        userState[chatId].photos.push(fileId);
+
+        await sendMessage(
+            chatId,
+            `📸 عکس جدید اضافه شد!
+الان ${userState[chatId].photos.length} عکس برای PDF داری.
+
+اگر عکس دیگه‌ای نداری، اسم فایل رو بفرست ✍🏻`
+        );
+
+        return;
+    }
+
+    // اولین عکس
+    userState[chatId] = {
+        step: "WAITING_FOR_NAME",
+        photos: [fileId]
+    };
+
+    await askForName(chatId);
 }
 
 async function handleName(chatId, text) {
     const state = userState[chatId];
 
     if (!state || state.step !== "WAITING_FOR_NAME") {
-        return false;
+        return;
+    }
+
+    if (!text) {
+        await sendMessage(
+            chatId,
+            "✍🏻 اول اسم فایل PDF رو به صورت متنی بفرست."
+        );
+        return;
     }
 
     const fileName = cleanFileName(text);
-
-    if (!state.photos || state.photos.length === 0) {
-        delete userState[chatId];
-
-        await sendMessage(
-            chatId,
-            "❌ عکس‌ها پیدا نشدن. دوباره عکس بفرست."
-        );
-
-        return true;
-    }
+    const photos = [...state.photos];
 
     await sendMessage(
         chatId,
-        `⏳ دارم فایل «${fileName}.pdf» رو می‌سازم...`
+        `⏳ دارم PDF رو می‌سازم...
+
+📄 اسم فایل:
+${fileName}.pdf
+
+📸 تعداد صفحات: ${photos.length}`
     );
 
     await sendAction(chatId, "upload_document");
 
     try {
-        const pdfBuffer = await createPdf(state.photos);
+        const pdfBuffer = await createPdf(photos);
 
         await sendPdf(
             chatId,
@@ -203,7 +231,11 @@ async function handleName(chatId, text) {
 
         await sendMessage(
             chatId,
-            "✅ PDF آماده شد 🧁"
+            `✅ آماده شد! 🧁
+
+📄 ${fileName}.pdf
+
+هر وقت خواستی، عکس‌های بعدی رو هم بفرست.`
         );
 
     } catch (error) {
@@ -214,101 +246,29 @@ async function handleName(chatId, text) {
 
         await sendMessage(
             chatId,
-            "❌ هنگام ساخت PDF خطا اتفاق افتاد. دوباره عکس‌ها رو بفرست."
+            "❌ یه مشکلی موقع ساخت PDF پیش اومد 😐\n\nدوباره عکس‌ها رو بفرست."
         );
     }
 
     delete userState[chatId];
-
-    return true;
-}
-
-async function handlePhoto(msg, chatId) {
-    const bestPhoto =
-        msg.photo[msg.photo.length - 1];
-
-    const fileId = bestPhoto.file_id;
-
-    const mediaGroupId =
-        msg.media_group_id;
-
-    console.log(
-        "PHOTO:",
-        fileId,
-        "ALBUM:",
-        mediaGroupId || "NO"
-    );
-
-    if (!mediaGroupId) {
-        await askForFileName(
-            chatId,
-            [fileId]
-        );
-
-        return;
-    }
-
-    if (!albums[mediaGroupId]) {
-        albums[mediaGroupId] = {
-            chatId,
-            photos: [],
-            timer: null
-        };
-    }
-
-    albums[mediaGroupId].photos.push(fileId);
-
-    if (albums[mediaGroupId].timer) {
-        clearTimeout(
-            albums[mediaGroupId].timer
-        );
-    }
-
-    albums[mediaGroupId].timer =
-        setTimeout(async () => {
-            const album =
-                albums[mediaGroupId];
-
-            if (!album) {
-                return;
-            }
-
-            delete albums[mediaGroupId];
-
-            console.log(
-                "ALBUM COMPLETE:",
-                album.photos.length
-            );
-
-            await askForFileName(
-                album.chatId,
-                album.photos
-            );
-
-        }, 1800);
 }
 
 export default async function handler(req, res) {
     try {
+        // تست Vercel
         if (req.method === "GET") {
             return res.status(200).send(
-                "🧁 PDF Bot is Running"
+                "🧁 نون خامه ای فعاله!"
             );
         }
 
         if (req.method !== "POST") {
             return res.status(405).json({
-                ok: false,
-                error: "Method Not Allowed"
+                ok: false
             });
         }
 
         const update = req.body;
-
-        console.log(
-            "UPDATE RECEIVED:",
-            JSON.stringify(update)
-        );
 
         if (!update || !update.message) {
             return res.status(200).json({
@@ -317,9 +277,7 @@ export default async function handler(req, res) {
         }
 
         const msg = update.message;
-
-        const chatId =
-            msg.chat && msg.chat.id;
+        const chatId = msg.chat?.id;
 
         if (!chatId) {
             return res.status(200).json({
@@ -332,20 +290,31 @@ export default async function handler(req, res) {
                 ? msg.text.trim()
                 : "";
 
+        // شروع
         if (text === "/start") {
             delete userState[chatId];
 
             await sendMessage(
                 chatId,
-                `سلام 👋🏻
+                `سلاممم 👋🏻🧁
 
-من نون خامه ای هستم 🧁
+من «نون خامه ای» هستم؛
+عکس‌هات رو می‌گیریم و تبدیلشون می‌کنیم به یه PDF مرتب و آماده 😎
 
-عکس‌هات رو به صورت تکی یا آلبوم بفرست.
+📸 عکس‌هات رو بفرست؛
+تکی یا چندتا پشت سر هم.
 
-بعد از دریافت عکس‌ها ازت می‌پرسم:
+بعدش فقط اسم فایل رو بهم بگو.
 
-📄 اسم فایل PDF رو چی بزارم؟`
+مثلاً:
+«جزوه فیزیک»
+«مدارک»
+«عکس‌های سفر»
+
+و من تحویلت میدم:
+📄 جزوه فیزیک.pdf
+
+بزن بریم 😌👇🏻`
             );
 
             return res.status(200).json({
@@ -353,35 +322,33 @@ export default async function handler(req, res) {
             });
         }
 
+        // اگر عکس است
+        if (msg.photo) {
+            await handlePhoto(msg, chatId);
+
+            return res.status(200).json({
+                ok: true
+            });
+        }
+
+        // اگر در انتظار اسم هستیم
         if (
             userState[chatId] &&
-            userState[chatId].step ===
-                "WAITING_FOR_NAME"
+            userState[chatId].step === "WAITING_FOR_NAME"
         ) {
-            await handleName(
-                chatId,
-                text
-            );
+            await handleName(chatId, text);
 
             return res.status(200).json({
                 ok: true
             });
         }
 
-        if (msg.photo) {
-            await handlePhoto(
-                msg,
-                chatId
-            );
-
-            return res.status(200).json({
-                ok: true
-            });
-        }
-
+        // پیام عادی
         await sendMessage(
             chatId,
-            "🧁 برای ساخت PDF عکس بفرست."
+            `🧁 من آماده‌ام!
+
+چندتا عکس بفرست تا برات PDF بسازم 📸📄`
         );
 
         return res.status(200).json({
@@ -398,4 +365,4 @@ export default async function handler(req, res) {
             ok: true
         });
     }
-      }
+}
