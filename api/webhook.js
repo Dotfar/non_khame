@@ -2,7 +2,8 @@ import axios from "axios";
 import PDFDocument from "pdfkit";
 import FormData from "form-data";
 
-const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s";
+// توکن فعلی رباتت رو اینجا قرار بده
+const TOKEN = "توکن فعلی رباتت";
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
 const userState = {};
@@ -24,10 +25,14 @@ async function telegram(method, data = {}) {
 }
 
 async function sendMessage(chatId, text) {
-    await telegram("sendMessage", {
-        chat_id: chatId,
-        text
-    });
+    try {
+        await telegram("sendMessage", {
+            chat_id: chatId,
+            text
+        });
+    } catch (error) {
+        console.error("SEND MESSAGE ERROR:", error.message);
+    }
 }
 
 async function sendAction(chatId, action) {
@@ -47,6 +52,10 @@ async function getFileUrl(fileId) {
     });
 
     const filePath = result.result.file_path;
+
+    if (!filePath) {
+        throw new Error("File path not found");
+    }
 
     return `https://api.telegram.org/file/bot${TOKEN}/${filePath}`;
 }
@@ -145,16 +154,10 @@ async function askForName(chatId) {
 
     await sendMessage(
         chatId,
-        `📸 ${count} عکس دریافت شد!
+        `📸 ${count} عکس گرفتم!
 
-اگه عکس دیگه‌ای هم داری، همینجا بفرست 👇🏻
-
-وقتی کارت تموم شد، فقط **اسم فایل PDF** رو بفرست.
-
-مثلاً:
-درس ریاضی
-یا
-عکس‌های سفر 🌱`
+هرچی دیگه داری بفرست؛
+وقتی تموم شد فقط اسم فایل رو بگو ✏️`
     );
 }
 
@@ -162,20 +165,20 @@ async function handlePhoto(msg, chatId) {
     const photo = msg.photo[msg.photo.length - 1];
     const fileId = photo.file_id;
 
-    // اگر قبلاً عکس فرستاده و منتظر اسم هستیم،
-    // عکس جدید را هم به همان PDF اضافه کن
+    // اگر قبلاً عکس فرستاده
     if (
         userState[chatId] &&
         userState[chatId].step === "WAITING_FOR_NAME"
     ) {
         userState[chatId].photos.push(fileId);
 
+        const count = userState[chatId].photos.length;
+
         await sendMessage(
             chatId,
-            `📸 عکس جدید اضافه شد!
-الان ${userState[chatId].photos.length} عکس برای PDF داری.
+            `📸 ${count} عکس شد!
 
-اگر عکس دیگه‌ای نداری، اسم فایل رو بفرست ✍🏻`
+اگه دیگه عکسی نداری، اسم فایل رو بفرست ✏️`
         );
 
         return;
@@ -187,20 +190,29 @@ async function handlePhoto(msg, chatId) {
         photos: [fileId]
     };
 
-    await askForName(chatId);
+    await sendMessage(
+        chatId,
+        `📸 عکس رو گرفتم!
+
+اگه عکس دیگه‌ای داری بفرست؛
+وقتی تموم شد اسم فایل رو بگو ✏️`
+    );
 }
 
 async function handleName(chatId, text) {
     const state = userState[chatId];
 
-    if (!state || state.step !== "WAITING_FOR_NAME") {
+    if (
+        !state ||
+        state.step !== "WAITING_FOR_NAME"
+    ) {
         return;
     }
 
     if (!text) {
         await sendMessage(
             chatId,
-            "✍🏻 اول اسم فایل PDF رو به صورت متنی بفرست."
+            "✏️ اسم فایل رو به صورت متن بفرست."
         );
         return;
     }
@@ -210,15 +222,13 @@ async function handleName(chatId, text) {
 
     await sendMessage(
         chatId,
-        `⏳ دارم PDF رو می‌سازم...
-
-📄 اسم فایل:
-${fileName}.pdf
-
-📸 تعداد صفحات: ${photos.length}`
+        `⏳ دارم PDF رو می‌سازم...`
     );
 
-    await sendAction(chatId, "upload_document");
+    await sendAction(
+        chatId,
+        "upload_document"
+    );
 
     try {
         const pdfBuffer = await createPdf(photos);
@@ -231,11 +241,9 @@ ${fileName}.pdf
 
         await sendMessage(
             chatId,
-            `✅ آماده شد! 🧁
+            `✅ آماده شد 🧁
 
-📄 ${fileName}.pdf
-
-هر وقت خواستی، عکس‌های بعدی رو هم بفرست.`
+📄 ${fileName}.pdf`
         );
 
     } catch (error) {
@@ -246,7 +254,7 @@ ${fileName}.pdf
 
         await sendMessage(
             chatId,
-            "❌ یه مشکلی موقع ساخت PDF پیش اومد 😐\n\nدوباره عکس‌ها رو بفرست."
+            "❌ یه مشکلی پیش اومد 😐\nدوباره امتحان کن."
         );
     }
 
@@ -258,7 +266,7 @@ export default async function handler(req, res) {
         // تست Vercel
         if (req.method === "GET") {
             return res.status(200).send(
-                "🧁 نون خامه ای فعاله!"
+                "🧁 نون خامه‌ای فعاله!"
             );
         }
 
@@ -270,7 +278,10 @@ export default async function handler(req, res) {
 
         const update = req.body;
 
-        if (!update || !update.message) {
+        if (
+            !update ||
+            !update.message
+        ) {
             return res.status(200).json({
                 ok: true
             });
@@ -290,31 +301,21 @@ export default async function handler(req, res) {
                 ? msg.text.trim()
                 : "";
 
-        // شروع
+        // /start
         if (text === "/start") {
             delete userState[chatId];
 
             await sendMessage(
                 chatId,
-                `سلاممم 👋🏻🧁
+                `سلاممم 😌🧁
 
-من «نون خامه ای» هستم؛
-عکس‌هات رو می‌گیریم و تبدیلشون می‌کنیم به یه PDF مرتب و آماده 😎
+عکس داری؟
+بفرستشون اینجا، من تبدیلشون می‌کنم به PDF 📸➡️📄
 
-📸 عکس‌هات رو بفرست؛
-تکی یا چندتا پشت سر هم.
+هرچندتا عکس خواستی بفرست؛
+وقتی تموم شد فقط اسم فایل رو بگو.
 
-بعدش فقط اسم فایل رو بهم بگو.
-
-مثلاً:
-«جزوه فیزیک»
-«مدارک»
-«عکس‌های سفر»
-
-و من تحویلت میدم:
-📄 جزوه فیزیک.pdf
-
-بزن بریم 😌👇🏻`
+بقیه‌ش با من 😎`
             );
 
             return res.status(200).json({
@@ -322,21 +323,28 @@ export default async function handler(req, res) {
             });
         }
 
-        // اگر عکس است
+        // عکس
         if (msg.photo) {
-            await handlePhoto(msg, chatId);
+            await handlePhoto(
+                msg,
+                chatId
+            );
 
             return res.status(200).json({
                 ok: true
             });
         }
 
-        // اگر در انتظار اسم هستیم
+        // اسم فایل
         if (
             userState[chatId] &&
-            userState[chatId].step === "WAITING_FOR_NAME"
+            userState[chatId].step ===
+                "WAITING_FOR_NAME"
         ) {
-            await handleName(chatId, text);
+            await handleName(
+                chatId,
+                text
+            );
 
             return res.status(200).json({
                 ok: true
@@ -346,9 +354,7 @@ export default async function handler(req, res) {
         // پیام عادی
         await sendMessage(
             chatId,
-            `🧁 من آماده‌ام!
-
-چندتا عکس بفرست تا برات PDF بسازم 📸📄`
+            "📸 عکس بفرست تا برات PDF کنم 🧁"
         );
 
         return res.status(200).json({
