@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import FormData from "form-data";
 
 // توکن فعلی رباتت رو اینجا قرار بده
-const TOKEN = "توکن فعلی رباتت";
+const TOKEN = "8478636545:AAF7OPGuMiK4xN1FWjhRkcxIinFbUGY3s-s";
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
 const userState = {};
